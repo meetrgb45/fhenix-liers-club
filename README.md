@@ -1,97 +1,103 @@
 # 🃏🔫 Liar's Bar on Fhenix
 
-A fully on-chain, privacy-preserving Liar's Bar game using Fhenix CoFHE. Players hold **encrypted hands** and the **bullet position is encrypted** — nobody knows where the bullet is until the trigger is actually pulled.
+A fully on-chain, privacy-preserving Liar's Bar game using Fhenix CoFHE on Arbitrum Sepolia.
+Players hold **FHE-encrypted card hands**. The **bullet position is encrypted** — nobody knows where it is until the trigger is pulled.
 
-## What's Built
+## Live Contracts (Arbitrum Sepolia)
 
-✅ **Smart Contracts** (Solidity 0.8.28 + FHE.sol)
-- `LiarsBarGame.sol` — Main state machine (lobby, claims, challenges, turn management)
-- `LiarsBarDeck.sol` — Encrypted card dealing (euint64, 0–51 per card)
-- `LiarsBarRoulette.sol` — Encrypted Russian Roulette (euint8 bullet position)
-- `ILiarsBarGame.sol` — Shared interface (events, enums, errors)
+| Contract | Address |
+|---|---|
+| LiarsBarGame | `0xFe71c05B2e4dC27a0DC6452f39a7E02086c1cd68` |
+| LiarsBarDeck | `0x6095B5f82E4C2c7a1462c58830E26380f52Ae2da` |
+| LiarsBarRoulette | `0xDE05c7d81536620909bc3C65F75541E8B30de1A3` |
 
-✅ **Tests** (Hardhat + @cofhe/hardhat-plugin)
-- `LiarsBarRoulette.test.ts` — Roulette mechanics (beginPull, publishTriggerResult, 6-chamber exhaustion)
-- `LiarsBarDeck.test.ts` — Card dealing, decryption, verifyClaimEncrypted
+## How to Play
 
-✅ **Deploy Script**
-- `scripts/deploy.ts` — Deploys all 3 contracts, links them, saves addresses to `deployments/{network}.json`
+1. Connect wallet (MetaMask on Arbitrum Sepolia)
+2. **Create Game** → share the URL with another player
+3. Other player opens the URL → **Join Game** with the game ID
+4. Host clicks **Start Game** (requires ≥2 players)
+5. Cards are dealt — only you can see your own hand (FHE-encrypted)
+6. **Make Claim** → select rank + count → submit
+7. Next player can **Call Liar!** to challenge
+8. Challenge triggers on-chain FHE decryption → loser revealed
+9. Loser clicks **Pull Trigger** → encrypted roulette resolves
+10. CLICK = survive, BANG = eliminated 💀
+11. Last player standing wins 🏆
 
-## Quick Start
+## Project Structure
 
-### 1. Install Dependencies
+```
+liars-bar-fhenix/
+├── contracts/
+│   ├── LiarsBarGame.sol       # State machine (lobby → deal → claim → challenge → roulette)
+│   ├── LiarsBarDeck.sol       # FHE card dealing (euint64, per-player randomness)
+│   ├── LiarsBarRoulette.sol   # Encrypted bullet position (euint8, beginPull/publishTriggerResult)
+│   └── interfaces/ILiarsBarGame.sol
+├── scripts/deploy.ts          # Deploy + link all 3 contracts
+├── test/                      # Hardhat tests (compile-verified; FHE.random not in mocks)
+└── frontend/
+    ├── app/
+    │   ├── page.tsx           # Lobby (connect, create, join)
+    │   └── game/[id]/page.tsx # Game room (all actions, real-time events, auto-roulette)
+    ├── components/            # CardHand, RouletteWheel, TriggerAnimation, PlayerSeat, ClaimModal, GameLog
+    ├── hooks/                 # useCofheClient, useMyHand, useChallenge, usePullTrigger
+    └── lib/                   # cofhe.ts, contracts.ts, cardHelpers.ts
+```
+
+## Local Development
+
+### Contracts
 
 ```bash
 cd liars-bar-fhenix
 npm install
-```
-
-### 2. Set Up Environment
-
-```bash
-cp .env.example .env
-# Edit .env with your SEPOLIA_RPC_URL and PRIVATE_KEY
-```
-
-### 3. Compile Contracts
-
-```bash
 npm run compile
+npm test          # Note: FHE.random* not supported in mocks — tests verify compilation only
 ```
 
-### 4. Run Tests
+### Deploy
 
 ```bash
-npm test
+# Add PRIVATE_KEY=0x... to .env
+npm run deploy:sepolia   # eth-sepolia
+# or
+npx hardhat run scripts/deploy.ts --network arb-sepolia
 ```
 
-### 5. Deploy to Sepolia
+### Frontend
 
 ```bash
-npm run deploy:sepolia
+cd frontend
+npm install
+# Create .env.local:
+# NEXT_PUBLIC_GAME_ADDRESS=0x...
+# NEXT_PUBLIC_DECK_ADDRESS=0x...
+# NEXT_PUBLIC_ROULETTE_ADDRESS=0x...
+# NEXT_PUBLIC_RPC_URL=https://arbitrum-sepolia-rpc.publicnode.com
+# NEXT_PUBLIC_DEPLOY_BLOCK=<deployment block number>
+npm run dev
 ```
 
-Deployment addresses will be saved to `deployments/eth-sepolia.json`.
+## Key FHE Patterns
+- **Cards**: `euint64` (0–51), dealt with `FHE.randomEuint64()` + per-player address salt
+- **Bullet**: `euint8` (0–5), `FHE.randomEuint8() % 6`, stays encrypted until trigger pulled
+- **Card decrypt**: `decryptForView(ctHash, FheTypes.Uint64).withPermit()` — only card owner can see
+- **Challenge reveal**: `FHE.allowPublic` → `decryptForTx(ctHash).withoutPermit()` → `publishRevealResult`
+- **Roulette**: `FHE.eq(bulletPos, chamber)` → `FHE.allowPublic` → `decryptForTx` → `publishTriggerResult`
+- **`decryptForTx` returns** `{ decryptedValue, signature }` (SDK v0.5.x)
+- **All ctHashes** stored/passed as `uint256` (cast from `euint*.unwrap()` which returns `bytes32`)
 
-## Architecture
+## Architecture Notes
 
-```
-LiarsBarGame (state machine)
-    ├── LiarsBarDeck (encrypted cards)
-    └── LiarsBarRoulette (encrypted bullet)
-```
-
-**Key FHE Patterns:**
-- Cards are `euint64` (0–51) to avoid multi-type cast issues
-- Bullet position is `euint8` (0–5), stays encrypted until decryptForTx
-- `ebool.unwrap()` and `euint64.unwrap()` return `bytes32` (not `uint256`)
-- `decryptForTx` returns `{ result, signature }` (not `{ decryptedValue, signature }`)
-- `FHE.allowPublic` used for challenge/roulette results (public outcomes)
-- `FHE.allow(card, player)` used for private card hands (only owner can decrypt)
-
-## Game Flow
-
-1. **Lobby** — `createGame()` → `joinGame()` (2–6 players)
-2. **Deal** — `startGame()` → `dealHand()` + `initRevolver()` for each player
-3. **Claim** — `makeClaim(rank, count)` → next player's turn
-4. **Challenge** — `challenge()` → `verifyClaimEncrypted()` → frontend `decryptForTx` → `publishRevealResult()`
-5. **Roulette** — `beginPull()` → frontend `decryptForTx` → `publishTriggerResult()`
-6. **Repeat** until 1 player remains → `GameOver`
-
-## Next Steps
-
-- [ ] Build Next.js frontend with wagmi + @cofhe/sdk
-- [ ] Add UI components (CardHand, RouletteWheel, TriggerAnimation)
-- [ ] Implement hooks (useCofheClient, useMyHand, useChallenge, usePullTrigger)
-- [ ] Deploy to production
+- `verifyClaimEncrypted` is called **inside** `challenge()` on-chain (has `onlyGame` modifier)
+- `pendingRoulettePlayer` tracks who is in roulette so any player can submit the trigger result
+- Gas overrides use `estimateFeesPerGas() * 2n` to handle Arbitrum Sepolia fee fluctuations
+- Frontend uses `useWatchContractEvent` for real-time updates + `getLogs` from deploy block for history
+- CoFHE threshold network: `https://testnet-cofhe-tn.fhenix.zone` (Arbitrum Sepolia supported)
 
 ## Resources
 
 - [Fhenix CoFHE Docs](https://cofhe-docs.fhenix.zone)
-- [Plan.md](../plan.md) — Complete build plan with all FHE patterns
 - [@cofhe/sdk](https://www.npmjs.com/package/@cofhe/sdk)
-- [@cofhe/hardhat-plugin](https://www.npmjs.com/package/@cofhe/hardhat-plugin)
-
-## License
-
-MIT
+- [Arbitrum Sepolia Faucet](https://faucet.triangleplatform.com/arbitrum/sepolia)

@@ -151,6 +151,7 @@ contract LiarsBarGame is ILiarsBarGame {
         emit RevealResult(gameId, loser, wasLying);
 
         g.state = GameState.Roulette;
+        pendingRoulettePlayer[gameId] = loser;
         uint256 triggerCtHash = roulette.beginPull(gameId, loser);
         // triggerCtHash is emitted in RouletteStarted event — frontend picks it up
         (triggerCtHash); // silence unused warning
@@ -184,9 +185,13 @@ contract LiarsBarGame is ILiarsBarGame {
         }
 
         g.state = GameState.PlayerTurn;
-        // After roulette, the player who just pulled goes next (or is skipped if eliminated)
+        // Reset claim state for next round
+        g.lastClaimant   = address(0);
+        g.lastClaimCount = 0;
+        delete pendingRoulettePlayer[gameId];
+        // After roulette, advance to next player after the one who just pulled
         _setTurnToPlayer(gameId, player);
-        if (!survived) _advanceTurn(gameId);
+        _advanceTurn(gameId);
     }
 
     // ─── Internal helpers ─────────────────────────────────────────────────
@@ -248,6 +253,22 @@ contract LiarsBarGame is ILiarsBarGame {
 
     function getCurrentPlayer(uint256 gameId) external view returns (address) {
         return _currentPlayer(gameId);
+    }
+
+    function getLastClaim(uint256 gameId) external view returns (address claimant, uint8 rank, uint8 count) {
+        Game storage g = games[gameId];
+        return (g.lastClaimant, uint8(g.lastClaimRank), g.lastClaimCount);
+    }
+
+    function getPendingRevealCtHash(uint256 gameId) external view returns (uint256) {
+        return games[gameId].pendingRevealCtHash;
+    }
+
+    // Track who is in roulette phase
+    mapping(uint256 => address) public pendingRoulettePlayer;
+
+    function getPendingRoulettePlayer(uint256 gameId) external view returns (address) {
+        return pendingRoulettePlayer[gameId];
     }
 
     function getPlayers(uint256 gameId) external view returns (address[] memory players, bool[] memory eliminated) {

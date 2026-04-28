@@ -44,7 +44,9 @@ contract LiarsBarDeck {
     function dealHand(uint256 gameId, address player) external onlyGame {
         euint64 seed = FHE.randomEuint64();
         for (uint8 i = 0; i < HAND_SIZE; i++) {
-            euint64 salt = FHE.asEuint64(uint64(i * 7 + 43));
+            // Include player address in salt so each player gets different cards
+            uint64 saltVal = uint64(uint160(player) >> 96) + uint64(i * 7 + 43);
+            euint64 salt = FHE.asEuint64(saltVal);
             euint64 card = FHE.rem(FHE.add(seed, salt), FHE.asEuint64(52));
             FHE.allow(card, player);
             FHE.allowThis(card);
