@@ -3,7 +3,7 @@
 A fully on-chain, privacy-preserving Liar's Bar game using Fhenix CoFHE on Arbitrum Sepolia.
 Players hold **FHE-encrypted card hands**. The **bullet position is encrypted** — nobody knows where it is until the trigger is pulled.
 
-Demo Video: https://youtu.be/lrY2mOBJp-w
+Demo Video: https://youtu.be/s8qYCmv0wII
 
 ## Live Contracts (Arbitrum Sepolia)
 
