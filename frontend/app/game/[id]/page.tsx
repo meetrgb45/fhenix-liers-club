@@ -29,15 +29,22 @@ export default function GamePage() {
   const [currentPlayer, setCurrentPlayer]   = useState<string>('');
   const [myHandHashes, setMyHandHashes]     = useState<bigint[]>([]);
   const [pullCounts, setPullCounts]         = useState<Record<string, number>>({});
+  const [roulettePlayer, setRoulettePlayer] = useState<string>('');
   const [showClaimModal, setShowClaimModal] = useState(false);
   const [triggerPhase, setTriggerPhase]     = useState<'suspense' | 'click' | 'bang' | null>(null);
   const [log, setLog]                       = useState<LogEntry[]>([]);
   const [status, setStatus]                 = useState('');
   const [copied, setCopied]                 = useState(false);
   const [mounted, setMounted]               = useState(false);
+  const startBlockRef                       = useRef<bigint | null>(null);
   const pullingRef                          = useRef(false); // prevent double-trigger
 
   useEffect(() => setMounted(true), []);
+
+  useEffect(() => {
+    if (!publicClient) return;
+    publicClient.getBlockNumber().then(b => { startBlockRef.current = b; });
+  }, [publicClient]);
 
   const addLog = useCallback((entry: LogEntry) =>
     setLog(prev => [...prev, entry]),
@@ -57,6 +64,13 @@ export default function GamePage() {
 
     setGameState(state); setCurrentPlayer(current); setPlayers(ps); setEliminated(elim);
 
+    if (state === GameState.Roulette) {
+      const rp = await game.read.getPendingRoulettePlayer([gameId]) as string;
+      setRoulettePlayer(rp);
+    } else {
+      setRoulettePlayer('');
+    }
+
     const counts: Record<string, number> = {};
     for (const p of ps) counts[p] = Number(await roulette.read.getPullCount([gameId, p as `0x${string}`]));
     setPullCounts(counts);
@@ -71,9 +85,7 @@ export default function GamePage() {
   // ─── Hydrate log from past events ────────────────────────────────
   const hydrateLog = useCallback(async () => {
     if (!publicClient) return;
-    // Use deployment block to avoid exceeding max block range on public RPCs
-    const deployBlock = BigInt(process.env.NEXT_PUBLIC_DEPLOY_BLOCK ?? '0');
-    const fromBlock = deployBlock;
+    const fromBlock = startBlockRef.current ?? await publicClient.getBlockNumber();
     const [claims, challenges, reveals, triggers, eliminations] = await Promise.all([
       publicClient.getLogs({ address: GAME_ADDRESS, event: GAME_ABI.find(e => e.name === 'ClaimMade')     as any, args: { gameId }, fromBlock }),
       publicClient.getLogs({ address: GAME_ADDRESS, event: GAME_ABI.find(e => e.name === 'ChallengeIssued') as any, args: { gameId }, fromBlock }),
@@ -97,6 +109,8 @@ export default function GamePage() {
   useEffect(() => {
     refreshState();
     hydrateLog();
+    const t = setInterval(refreshState, 3000);
+    return () => clearInterval(t);
   }, [refreshState, hydrateLog]);
 
   // ─── Real-time event watching (replaces polling) ──────────────────
@@ -283,11 +297,14 @@ export default function GamePage() {
         {gameState === GameState.PlayerTurn && !isMyTurn && (
           <p className="text-sm text-gray-500 animate-pulse">Waiting for {currentPlayer.slice(0,6)}…</p>
         )}
-        {gameState === GameState.Roulette && (
+        {gameState === GameState.Roulette && roulettePlayer.toLowerCase() === address?.toLowerCase() && (
           <button onClick={handleManualTrigger}
             className="bg-red-700 font-bold px-6 py-2 rounded-lg hover:bg-red-600 animate-pulse">
             🔫 Pull Trigger
           </button>
+        )}
+        {gameState === GameState.Roulette && roulettePlayer && roulettePlayer.toLowerCase() !== address?.toLowerCase() && (
+          <p className="text-sm text-gray-500 animate-pulse">🔫 {roulettePlayer.slice(0,6)}… is pulling the trigger…</p>
         )}
         {gameState === GameState.GameOver && (
           <p className="text-yellow-400 font-bold text-xl">🏆 Game Over!</p>

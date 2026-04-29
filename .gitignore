@@ -4,6 +4,7 @@ cache
 typechain-types
 coverage
 .env
+frontend/.env.local
 deployments/
 frontend/.next
 frontend/node_modules
