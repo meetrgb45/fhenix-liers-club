@@ -1,23 +1,38 @@
 'use client';
 import { FheTypes } from '@cofhe/sdk';
-import { cofheClient } from '@/lib/cofhe';
+import { useCofheClient } from './useCofheClient';
 
-/**
- * Decrypt the current player's 3 cards for UI display.
- * Uses decryptForView — no on-chain tx needed.
- * Requires a valid permit — always call .withPermit() explicitly.
- */
-export async function decryptMyHand(ctHashes: bigint[]): Promise<number[]> {
-  const validHashes = ctHashes.filter(h => h !== 0n);
-  if (!validHashes.length) return [];
+export function useDecryptHand() {
+  const { cofheClient, isReady } = useCofheClient();
 
-  await cofheClient.permits.getOrCreateSelfPermit();
+  const decryptHand = async (ctHashes: bigint[]): Promise<number[]> => {
+    if (!isReady) throw new Error('CoFHE not ready');
+    const validHashes = ctHashes.filter(h => h !== 0n);
+    if (!validHashes.length) return [];
 
-  const cards = await Promise.all(
-    validHashes.map(hash =>
-      cofheClient.decryptForView(hash, FheTypes.Uint64).withPermit().execute()
-    )
-  );
+    await cofheClient.permits.getOrCreateSelfPermit();
 
-  return cards.map(Number);
+    const BACKOFF = [3000, 5000, 8000, 10000, 15000];
+    const decryptOne = async (hash: bigint): Promise<bigint> => {
+      for (let i = 0; i <= BACKOFF.length; i++) {
+        try {
+          return await cofheClient.decryptForView(hash, FheTypes.Uint64).withPermit().execute();
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          const isTransient = /sealOutput|HTTP\s*[3-5]\d{2}|Failed to fetch|NetworkError|ETIMEDOUT/i.test(msg);
+          if (isTransient && i < BACKOFF.length) {
+            await new Promise(r => setTimeout(r, BACKOFF[i]));
+            continue;
+          }
+          throw err;
+        }
+      }
+      throw new Error('Decrypt retries exhausted');
+    };
+
+    const cards = await Promise.all(validHashes.map(decryptOne));
+    return cards.map(Number);
+  };
+
+  return { decryptHand, isReady };
 }
